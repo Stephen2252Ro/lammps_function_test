@@ -1,0 +1,55 @@
+
+units real
+atom_style full
+
+
+variable rcut  index 12
+variable kcal index 4184
+variable N_A  index 6.022140857e+23
+variable k    index 1.38064852e-23
+variable eV   index 1.6021766208e-19
+
+# NH3
+# Bernhard Eckl
+# https://www.tandfonline.com/doi/pdf/10.1080/00268970802112137?needAccess=true
+#variable     A_NH3 index 582e3
+#variable     C_NH3 index 595
+variable eps_N_NH3 index $(182.9*v_k*v_N_A/v_kcal)
+variable sig_N_NH3 index 3.3763
+variable eps_H_NH3 index 0
+variable sig_H_NH3 index 0
+variable    r0_NH3 index 0.9572
+#variable   ang_NH3 index 104.52exit
+variable   q_N_NH3 index -0.9993
+variable   q_H_NH3 index  0.3331
+variable    Kb_NH3 index 0
+variable    Ka_NH3 index 0
+
+variable lhx index 45
+variable lhy index ${lhx}
+variable lhz index ${lhx}
+
+region box block 0 ${lhx} 0 ${lhy} 0 ${lhz} units box
+create_box 2 box bond/types 1 angle/types 0 extra/bond/per/atom 100 extra/angle/per/atom 0 extra/special/per/atom 100
+
+mass 1 14.0067
+mass 2 1.008
+
+molecule nh3 nh3.molfile
+lattice fcc 5 #$(1.89*v_sig_N_NH3)
+#create_atoms 0 random 50 103 nh3_mem mol nh3 102
+create_atoms 0 box mol nh3 102 ratio 0.825 103
+neighbor        2.0 bin
+#neigh_modify    delay 0 one 5000
+
+pair_style lj/cut/coul/long 12.0 9.0
+bond_style harmonic
+#angle_style harmonic
+kspace_style pppm 1e-5
+
+pair_coeff 1 1 ${eps_N_NH3} ${sig_N_NH3}
+pair_coeff 2 2 ${eps_H_NH3} ${sig_H_NH3}
+bond_coeff 1   ${Kb_NH3} ${r0_NH3}
+#angle_coeff 1  ${Ka_NH3} ${ang_NH3}
+
+write_data data.sys
