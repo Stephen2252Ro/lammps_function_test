@@ -1,0 +1,60 @@
+#  ------------------------------
+#  Official Test In-File of Luo
+#  test lammps function using this file
+#  create formal in-file following structure of this file
+#  ------------------------------
+
+## TESTED FUNCTION
+#
+#
+##
+
+# --------- Initialization
+#    include units, dimension, boundary, atom_style,,,
+
+clear
+reset_timestep  0
+timestep        100
+units           lj
+atom_style      atomic
+
+# --------- System Defination
+#    system read from outside or created in lammps
+
+## read_data/restart  change_box
+lattice         fcc      0.8442
+region          box      block   0 10 0 10 0 10
+create_box      1        box
+create_atoms    1        box
+
+# --------- Simulation Setting
+#    force field, simulation parameter, output option,,,
+
+## mass
+mass            1        1.0
+
+velocity        all      create  3.0 87287 loop geom
+
+## pair, bond, angle..style, coeff
+pair_style      lj/cut   2.5
+pair_coeff      1 1 1.0 1.0 2.5
+
+neighbor        0.3      bin
+neigh_modify    every    20      delay 0 check no
+
+## compute fix vars
+
+
+## ensemble
+fix             1        all     nve
+
+## thermo-things, vars, dump
+thermo          50
+
+
+
+# --------- Run
+
+## restart, run, fix_balance, write-things
+run             250
+write_data      aa.dat
