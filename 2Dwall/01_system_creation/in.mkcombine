@@ -1,0 +1,128 @@
+variable name index "10x10p5w2.5d2.5"
+variable data_wall index "data.wall10x10p5w2.5d2.5"
+variable data_ar index "data.ar10x10"
+
+# initial settings #############################################################
+units real
+atom_style atomic
+atom_modify map yes
+################################################################################
+
+# various constants, taken form scipy.constants
+variable atm  index 101325
+variable kcal index 4184
+variable N_A  index 6.022140857e+23
+variable k    index 1.38064852e-23
+variable eV   index 1.6021766208e-19
+
+
+# Journal of Computational Physics Volume 17, Issue 4, April 1975, Pages 401-414
+# https://doi.org/10.1016/0021-9991(75)90042-X
+variable eps_ar index $(119.8*v_k*v_N_A/v_kcal)
+variable sig_ar index 3.405
+
+################################################################################
+
+# Metal parameters (Au)
+# phys. stat. sol. (a) 37, 695 (1976)
+# doi.org/10.1002/pssa.2210370242
+variable alpha_au index 1.66136
+variable r0_au    index 2.99032
+variable D_au     index $(0.49005*v_eV/v_kcal*v_N_A)
+
+# Au-Ar parameters
+# J. Phys. Chem. A, 2015, 119 (26), pp 6897–6908
+# DOI: 10.1021/acs.jpca.5b03769
+variable alpha_ar_au index 1.3787
+variable r0_ar_au    index 4.1024
+variable D_ar_au     index $(0.013583*v_eV/v_kcal*v_N_A)
+
+
+# gap between phases
+variable gap index 5
+
+read_data ${data_wall}
+#change_box all z delta 0 $(2*v_gap)
+#displace_atoms all move 0 0 $(v_gap-bound(all,zmin))
+group bwall union all
+
+read_data ${data_wall} add append
+group twall subtract all bwall
+read_data ${data_ar} add append
+group liq subtract all bwall twall
+
+variable hw index $(bound(bwall,zmax)-bound(bwall,zmin))
+variable hl index $(bound(liq,zmax)-bound(liq,zmin))
+
+change_box all z final 0 $(2*v_hw+v_hl+3*v_gap+1)
+
+displace_atoms bwall move 0 0 $(1-bound(bwall,zmin))
+displace_atoms liq   move 0 0 $(bound(bwall,zmax)+v_gap-bound(liq,zmin))
+displace_atoms twall move 0 0 $(zhi-v_gap-bound(twall,zmax))
+
+
+# flip top wall
+variable mirrorx atom lx-x
+variable mirrory atom ly-y
+variable mirrorz atom bound(twall,zmax)+bound(twall,zmin)-z
+set group twall x v_mirrorx
+set group twall y v_mirrory
+set group twall z v_mirrorz
+
+
+# force field parameters #######################################################
+pair_style hybrid morse 12.0 lj/cut 12.0
+
+mass 1 196.966569 # Au
+mass 2 39.95  # Ar
+
+pair_coeff 1 1 morse  ${D_au}    ${alpha_au}     ${r0_au}
+pair_coeff 1 2 morse  ${D_ar_au} ${alpha_ar_au}  ${r0_ar_au}
+pair_coeff 2 2 lj/cut ${eps_ar}  ${sig_ar}
+################################################################################
+
+
+write_data data.${name}
+
+region bottommost plane 0 0 $(bound(bwall,zmin)+0.1) 0 0 -1 units box
+group bottommost region bottommost
+region topmost plane 0 0 $(bound(twall,zmax)-0.1) 0 0 1 units box
+group topmost region topmost
+if "$(count(bottommost)) != $(count(topmost))" then "print 'wall numbers incorrect'" "quit 1"
+
+group delme subtract bwall bottommost
+variable za index $(bound(delme,zmin)-xcm(bottommost,z))
+group delme delete
+
+variable nlayer_bottom index $(round((bound(bwall,zmax)-bound(bwall,zmin))/v_za+1))
+variable nlayer_top index $(round((bound(twall,zmax)-bound(twall,zmin))/v_za+1))
+
+variable layerID atom   &
+  "gmask(bwall)*round((z-xcm(bottommost,z))/v_za+1) &
+  +gmask(twall)*round((z-xcm(topmost,z))/v_za+v_nlayer_bottom+v_nlayer_top)"
+
+group wall union twall bwall
+
+variable x0 index $(bound(wall,xmin))
+# make sure x0 is 0
+if "${x0} != 0" then "print 'x0 must be 0'" "quit 1"
+variable nx index $(round(lx/v_za))
+variable xa index $(lx/v_nx)
+variable xi atom round((x-v_x0)/v_xa+1)
+variable x  atom x-round(x/v_xa)*v_xa+(v_xi-1)*v_xa
+
+variable  binID  atom   (v_layerID-1)*v_nx+v_xi
+
+compute wall_1d wall chunk/atom v_layerID nchunk once ids once compress yes discard no
+compute wall_2d wall chunk/atom v_binID nchunk once ids once compress yes discard no
+compute xi      wall chunk/atom v_xi    nchunk once ids once compress yes discard no
+variable z atom z
+fix wall_1d wall ave/chunk 1 1 1 wall_1d v_z file ${name}.layerID.chunk.txt
+fix wall_2d wall ave/chunk 1 1 1 wall_2d v_x v_z  file ${name}.binID.chunk.txt
+fix xi      wall ave/chunk 1 1 1 xi      v_x file ${name}.xi.chunk.txt
+
+run 0
+
+write_dump wall custom ${name}.layerID.dump.txt id v_layerID modify sort 2
+write_dump wall custom ${name}.binID.dump.txt id v_binID modify sort 2
+write_dump wall custom ${name}.xi.dump.txt id v_xi modify sort 2

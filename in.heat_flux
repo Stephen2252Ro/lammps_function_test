@@ -1,0 +1,226 @@
+# last modified: 2021-05-18
+
+# randomize seeds
+python get_random_integer return v_random_integer format i here """
+def get_random_integer():
+  import random
+  # limits from random_mars.cpp
+  return random.randint(1, 900000000)
+"""
+variable random_integer python get_random_integer
+
+variable dt    index 0.2
+variable tstep index 500
+variable nstep index 5000000
+#variable dstep index 1000
+variable dstep index $(v_nstep/100)
+variable temp  index 300 # K
+variable ctemp index 290 # K
+variable htemp index 310 # K
+variable tdamp index 100
+variable press index 1 # atm
+variable alpha index 0.2
+variable rcut  index 12
+#variable J     index 300e6 # W/m^2
+#variable tdamp index 1000
+variable pdamp index 1000
+
+# temperature sampling parameters
+variable nevery   index 100
+variable nfreq    index $(v_nstep/5)
+variable nrepeat  index $(v_nfreq/v_nevery)
+variable nbin     index 100
+
+# heat flux correlation parameters
+variable nevery_hfc  index 1
+variable nfreq_hfc   index 50000
+variable nrepeat_hfc index $(v_nfreq_hfc/v_nevery_hfc)
+
+units real
+atom_style full
+
+variable kcal index 4184
+variable N_A  index 6.022140857e+23
+variable k    index 1.38064852e-23
+variable eV   index 1.6021766208e-19
+
+# TIP3P
+# J. Chem. Phys. 79, 926 (1983)
+# https://doi.org/10.1063/1.445869
+variable     A_TIP3P index 582e3
+variable     C_TIP3P index 595
+variable eps_O_TIP3P index $(0.25*v_C_TIP3P*v_C_TIP3P/v_A_TIP3P)
+variable sig_O_TIP3P index $((v_A_TIP3P/v_C_TIP3P)^(1/6))
+variable eps_H_TIP3P index 0
+variable sig_H_TIP3P index 0
+variable    r0_TIP3P index 0.9572
+variable   ang_TIP3P index 104.52
+variable   q_O_TIP3P index -0.834
+variable   q_H_TIP3P index  0.417
+
+# TIP3P/Fs bond and angle parameters
+# J. Chem. Phys. 124, 024503 (2006)
+# https://doi.org/10.1063/1.2136877
+variable    Kb_TIP3PFS index $(0.5*1059.162)
+variable    Ka_TIP3PFS index $(0.5*68.087)
+
+read_data data.init nocoeff
+# change_box all x final $(-0.5*37.021) $(0.5*37.021) y final $(-0.5*37.021) $(0.5*37.021) z final $(-0.5*148.083) $(0.5*148.083)
+reset_timestep 0
+variable lstep index $((floor(step/v_nstep)+1)*v_nstep)
+timestep ${dt}
+pair_style lj/cut/coul/dsf ${alpha} ${rcut}
+bond_style harmonic
+angle_style harmonic
+special_bonds lj/coul 0 0 0
+
+set type 1 charge ${q_O_TIP3P}
+set type 2 charge ${q_H_TIP3P}
+
+pair_coeff 1 1 ${eps_O_TIP3P} ${sig_O_TIP3P}
+pair_coeff 2 2 ${eps_H_TIP3P} ${sig_H_TIP3P}
+bond_coeff  1  ${Kb_TIP3PFS}  ${r0_TIP3P}
+angle_coeff 1  ${Ka_TIP3PFS}  ${ang_TIP3P}
+
+# velocity all create ${temp} ${random_integer} mom yes
+
+# heat flux computations
+group grpdmy empty
+
+# zero computes
+compute ke0  grpdmy ke/atom
+compute pe0  grpdmy pe/atom
+compute ss0  grpdmy stress/atom NULL
+compute css0 grpdmy centroid/stress/atom NULL
+
+compute  ke     all ke/atom
+compute  pe     all pe/atom
+# normal atomic stress
+compute  sstot  all stress/atom NULL virial
+compute  ssbnd  all stress/atom NULL bond
+compute  ssang  all stress/atom NULL angle
+compute  ssvdw  all stress/atom NULL pair
+compute  ssfix  all stress/atom NULL fix
+# centroid atomic stress
+compute  csstot all centroid/stress/atom NULL virial
+compute  cssbnd all centroid/stress/atom NULL bond
+compute  cssang all centroid/stress/atom NULL angle
+compute  cssvdw all centroid/stress/atom NULL pair
+compute  cssfix all centroid/stress/atom NULL fix
+
+compute JVtot  all heat/flux ke   pe   sstot
+compute JVkin  all heat/flux ke   pe0  ss0
+compute JVpot  all heat/flux ke0  pe   ss0
+compute JVbnd  all heat/flux ke0  pe0  ssbnd
+compute JVang  all heat/flux ke0  pe0  ssang
+compute JVvdw  all heat/flux ke0  pe0  ssvdw
+compute JVfix  all heat/flux ke0  pe0  ssfix
+compute cJVtot all heat/flux ke   pe   csstot
+compute cJVkin all heat/flux ke   pe0  ss0
+compute cJVpot all heat/flux ke0  pe   ss0
+compute cJVbnd all heat/flux ke0  pe0  cssbnd
+compute cJVang all heat/flux ke0  pe0  cssang
+compute cJVvdw all heat/flux ke0  pe0  cssvdw
+compute cJVfix all heat/flux ke0  pe0  cssfix
+
+#variable hflux1_real2si index $(1/v_vol1/v_hflux_si2real)
+#variable hflux2_real2si index $(1/v_vol2/v_hflux_si2real)
+
+# kcal/mol -> J                  kcal->J       1/mol->1
+variable ene_real2si         index $(v_kcal/v_N_A)
+
+# kcal/mol -> J/m^2              kcal/mol->J   1->1/A^2 1/A^2->1/m^2
+#variable ene2edens_real2si   equal v_ene_real2si/v_A*1e20
+
+# kcal/mol/A -> N                kcal/mol->J   1/A->1/m
+variable force_real2si       index $(v_ene_real2si*1e10)
+
+# kcal/mol/A -> Pa               kcal/mol/A->N 1->1/A 1/A->m
+#variable force2press_real2si equal v_force_real2si/v_A*1e20
+
+# kcal/mol/A*A/fs = kcal/mol/fs-> W kcal/mol->J 1/fs->1/s
+variable power_real2si       index $(v_ene_real2si*1e15)
+
+# kcal/mol/fs -> W/m^2
+#variable power2flux_real2si  equal v_power_real2si/v_A*1e20
+
+# kcal/mol/A*A/fs*A = kcal*A/mol/fs-> Wm kcal/mol->J 1/fs->1/s A->m
+variable powerdistance_real2si       index $(v_ene_real2si*1e15*1e-10)
+
+# kcal*A/mol/fs -> W/m^2
+variable powerdistance2flux_real2si equal v_powerdistance_real2si/vol*1e30
+
+variable  JVtot  vector v_powerdistance2flux_real2si*c_JVtot
+variable  JVkin  vector v_powerdistance2flux_real2si*c_JVkin
+variable  JVpot  vector v_powerdistance2flux_real2si*c_JVpot
+variable  JVbnd  vector v_powerdistance2flux_real2si*c_JVbnd
+variable  JVang  vector v_powerdistance2flux_real2si*c_JVang
+variable  JVvdw  vector v_powerdistance2flux_real2si*c_JVvdw
+variable  JVfix  vector v_powerdistance2flux_real2si*c_JVfix
+variable  cJVtot vector v_powerdistance2flux_real2si*c_cJVtot
+variable  cJVkin vector v_powerdistance2flux_real2si*c_cJVkin
+variable  cJVpot vector v_powerdistance2flux_real2si*c_cJVpot
+variable  cJVbnd vector v_powerdistance2flux_real2si*c_cJVbnd
+variable  cJVang vector v_powerdistance2flux_real2si*c_cJVang
+variable  cJVvdw vector v_powerdistance2flux_real2si*c_cJVvdw
+variable  cJVfix vector v_powerdistance2flux_real2si*c_cJVfix
+
+# velocity scaling for equilibration
+#fix vscale all temp/rescale 1 ${temp} ${temp} 0 1
+#fix tcont all temp/csvr ${temp} ${temp} ${tdamp} ${random_integer}
+
+fix integ all nve
+#fix integ all nve/limit 1
+#fix integ all nvt temp ${temp} ${temp} ${tdamp}
+#fix integ all npt temp ${temp} ${temp} ${tdamp} iso ${press} ${press} ${pdamp}
+#fix clang cld langevin ${ctemp} ${ctemp} ${tdamp} ${random_integer} tally yes zero yes
+#fix hlang hot langevin ${htemp} ${htemp} ${tdamp} ${random_integer} tally yes zero yes
+compute mom all momentum
+
+#variable cene equal f_clang*v_ene_real2si
+#variable hene equal f_hlang*v_ene_real2si
+
+thermo ${tstep}
+thermo_style custom step time &
+  temp pe etotal press evdwl ecoul epair ebond eangle c_mom[*]
+
+dump traj all dcd ${dstep} traj.dcd
+dump_modify traj unwrap yes
+
+fix balance all balance ${dstep} 1.1 shift z 10 1.1
+
+fix hcx all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_JVtot[1] v_JVkin[1] v_JVpot[1] &
+  v_JVbnd[1] v_JVang[1] v_JVvdw[1] v_JVfix[1] &
+  type auto/upper file hfcx.dat ave running
+
+fix hcy all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_JVtot[2] v_JVkin[2] v_JVpot[2] &
+  v_JVbnd[2] v_JVang[2] v_JVvdw[2] v_JVfix[2] &
+  type auto/upper file hfcy.dat ave running
+
+fix hcz all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_JVtot[3] v_JVkin[3] v_JVpot[3] &
+  v_JVbnd[3] v_JVang[3] v_JVvdw[3] v_JVfix[3] &
+  type auto/upper file hfcz.dat ave running
+
+fix chcx all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_cJVtot[1] v_cJVkin[1] v_cJVpot[1] &
+  v_cJVbnd[1] v_cJVang[1] v_cJVvdw[1] v_cJVfix[1] &
+  type auto/upper file chfcx.dat ave running
+
+fix chcy all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_cJVtot[2] v_cJVkin[2] v_cJVpot[2] &
+  v_cJVbnd[2] v_cJVang[2] v_cJVvdw[2] v_cJVfix[2] &
+  type auto/upper file chfcy.dat ave running
+
+fix chcz all ave/correlate ${nevery_hfc} ${nrepeat_hfc} ${nfreq_hfc} &
+  v_cJVtot[3] v_cJVkin[3] v_cJVpot[3] &
+  v_cJVbnd[3] v_cJVang[3] v_cJVvdw[3] v_cJVfix[3] &
+  type auto/upper file chfcz.dat ave running
+
+restart ${dstep} restart.a restart.b
+write_data data.initial
+run ${lstep} upto
+write_data data.last
+write_restart restart.last

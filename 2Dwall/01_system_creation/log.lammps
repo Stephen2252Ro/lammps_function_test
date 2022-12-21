@@ -1,0 +1,259 @@
+LAMMPS (23 Jun 2022 - Update 1)
+variable name index "10x10p5w2.5d2.5"
+variable data_wall index "data.wall10x10p5w2.5d2.5"
+variable data_ar index "data.ar10x10"
+
+# initial settings #############################################################
+units real
+atom_style atomic
+atom_modify map yes
+################################################################################
+
+# various constants, taken form scipy.constants
+variable atm  index 101325
+variable kcal index 4184
+variable N_A  index 6.022140857e+23
+variable k    index 1.38064852e-23
+variable eV   index 1.6021766208e-19
+
+
+# Journal of Computational Physics Volume 17, Issue 4, April 1975, Pages 401-414
+# https://doi.org/10.1016/0021-9991(75)90042-X
+variable eps_ar index $(119.8*v_k*v_N_A/v_kcal)
+variable eps_ar index 0.23806699125275809781
+variable sig_ar index 3.405
+
+################################################################################
+
+# Metal parameters (Au)
+# phys. stat. sol. (a) 37, 695 (1976)
+# doi.org/10.1002/pssa.2210370242
+variable alpha_au index 1.66136
+variable r0_au    index 2.99032
+variable D_au     index $(0.49005*v_eV/v_kcal*v_N_A)
+variable D_au     index 11.300821553314655432
+
+# Au-Ar parameters
+# J. Phys. Chem. A, 2015, 119 (26), pp 6897–6908
+# DOI: 10.1021/acs.jpca.5b03769
+variable alpha_ar_au index 1.3787
+variable r0_ar_au    index 4.1024
+variable D_ar_au     index $(0.013583*v_eV/v_kcal*v_N_A)
+variable D_ar_au     index 0.31323142364793993275
+
+
+# gap between phases
+variable gap index 5
+
+read_data ${data_wall}
+read_data data.wall10x10p5w2.5d2.5
+Reading data file ...
+  orthogonal box = (0 0 0) to (40.6401 40.6401 44.66347)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  3900 atoms
+  reading velocities ...
+  3900 velocities
+  read_data CPU = 0.008 seconds
+#change_box all z delta 0 $(2*v_gap)
+#displace_atoms all move 0 0 $(v_gap-bound(all,zmin))
+group bwall union all
+3900 atoms in group bwall
+
+read_data ${data_wall} add append
+read_data data.wall10x10p5w2.5d2.5 add append
+Reading data file ...
+  orthogonal box = (0 0 0) to (40.6401 40.6401 44.66347)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  3900 atoms
+  reading velocities ...
+  3900 velocities
+  read_data CPU = 0.007 seconds
+group twall subtract all bwall
+3900 atoms in group twall
+read_data ${data_ar} add append
+read_data data.ar10x10 add append
+Reading data file ...
+  orthogonal box = (0 0 0) to (40.6401 40.6401 85.34421)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  4000 atoms
+  reading velocities ...
+  4000 velocities
+  read_data CPU = 0.007 seconds
+group liq subtract all bwall twall
+4000 atoms in group liq
+
+variable hw index $(bound(bwall,zmax)-bound(bwall,zmin))
+variable hw index 42.672104999999994845
+variable hl index $(bound(liq,zmax)-bound(liq,zmin))
+variable hl index 82.728156038503172454
+
+change_box all z final 0 $(2*v_hw+v_hl+3*v_gap+1)
+change_box all z final 0 184.07236603850316214
+Changing box ...
+  orthogonal box = (0 0 0) to (40.6401 40.6401 184.07237)
+
+displace_atoms bwall move 0 0 $(1-bound(bwall,zmin))
+displace_atoms bwall move 0 0 1
+Displacing atoms ...
+displace_atoms liq   move 0 0 $(bound(bwall,zmax)+v_gap-bound(liq,zmin))
+displace_atoms liq   move 0 0 48.146251963963997866
+Displacing atoms ...
+displace_atoms twall move 0 0 $(zhi-v_gap-bound(twall,zmax))
+displace_atoms twall move 0 0 136.4002610385031744
+Displacing atoms ...
+
+
+# flip top wall
+variable mirrorx atom lx-x
+variable mirrory atom ly-y
+variable mirrorz atom bound(twall,zmax)+bound(twall,zmin)-z
+set group twall x v_mirrorx
+Setting atom values ...
+  3900 settings made for x
+set group twall y v_mirrory
+Setting atom values ...
+  3900 settings made for y
+set group twall z v_mirrorz
+Setting atom values ...
+  3900 settings made for z
+
+
+# force field parameters #######################################################
+pair_style hybrid morse 12.0 lj/cut 12.0
+
+mass 1 196.966569 # Au
+mass 2 39.95  # Ar
+
+pair_coeff 1 1 morse  ${D_au}    ${alpha_au}     ${r0_au}
+pair_coeff 1 1 morse  11.300821553314655432    ${alpha_au}     ${r0_au}
+pair_coeff 1 1 morse  11.300821553314655432    1.66136     ${r0_au}
+pair_coeff 1 1 morse  11.300821553314655432    1.66136     2.99032
+pair_coeff 1 2 morse  ${D_ar_au} ${alpha_ar_au}  ${r0_ar_au}
+pair_coeff 1 2 morse  0.31323142364793993275 ${alpha_ar_au}  ${r0_ar_au}
+pair_coeff 1 2 morse  0.31323142364793993275 1.3787  ${r0_ar_au}
+pair_coeff 1 2 morse  0.31323142364793993275 1.3787  4.1024
+pair_coeff 2 2 lj/cut ${eps_ar}  ${sig_ar}
+pair_coeff 2 2 lj/cut 0.23806699125275809781  ${sig_ar}
+pair_coeff 2 2 lj/cut 0.23806699125275809781  3.405
+################################################################################
+
+
+write_data data.${name}
+write_data data.10x10p5w2.5d2.5
+System init for write_data ...
+Generated 0 of 1 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update every 1 steps, delay 10 steps, check yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 14
+  ghost atom cutoff = 14
+  binsize = 7, bins = 6 6 27
+  3 neighbor lists, perpetual/occasional/extra = 3 0 0
+  (1) pair morse, perpetual, skip from (3)
+      attributes: half, newton on
+      pair build: skip
+      stencil: none
+      bin: none
+  (2) pair lj/cut, perpetual, skip from (3)
+      attributes: half, newton on
+      pair build: skip
+      stencil: none
+      bin: none
+  (3) neighbor class addition, perpetual
+      attributes: half, newton on
+      pair build: half/bin/atomonly/newton
+      stencil: half/bin/3d
+      bin: standard
+
+region bottommost plane 0 0 $(bound(bwall,zmin)+0.1) 0 0 -1 units box
+region bottommost plane 0 0 1.1000000000000000888 0 0 -1 units box
+group bottommost region bottommost
+200 atoms in group bottommost
+region topmost plane 0 0 $(bound(twall,zmax)-0.1) 0 0 1 units box
+region topmost plane 0 0 178.97236603850316783 0 0 1 units box
+group topmost region topmost
+200 atoms in group topmost
+if "$(count(bottommost)) != $(count(topmost))" then "print 'wall numbers incorrect'" "quit 1"
+
+group delme subtract bwall bottommost
+3700 atoms in group delme
+variable za index $(bound(delme,zmin)-xcm(bottommost,z))
+variable za index 2.0320049999999998391
+group delme delete
+
+variable nlayer_bottom index $(round((bound(bwall,zmax)-bound(bwall,zmin))/v_za+1))
+variable nlayer_bottom index 22
+variable nlayer_top index $(round((bound(twall,zmax)-bound(twall,zmin))/v_za+1))
+variable nlayer_top index 22
+
+variable layerID atom     "gmask(bwall)*round((z-xcm(bottommost,z))/v_za+1)   +gmask(twall)*round((z-xcm(topmost,z))/v_za+v_nlayer_bottom+v_nlayer_top)"
+
+group wall union twall bwall
+7800 atoms in group wall
+
+variable x0 index $(bound(wall,xmin))
+variable x0 index 0
+# make sure x0 is 0
+if "${x0} != 0" then "print 'x0 must be 0'" "quit 1"
+variable nx index $(round(lx/v_za))
+variable nx index 20
+variable xa index $(lx/v_nx)
+variable xa index 2.0320049999999998391
+variable xi atom round((x-v_x0)/v_xa+1)
+variable x  atom x-round(x/v_xa)*v_xa+(v_xi-1)*v_xa
+
+variable  binID  atom   (v_layerID-1)*v_nx+v_xi
+
+compute wall_1d wall chunk/atom v_layerID nchunk once ids once compress yes discard no
+compute wall_2d wall chunk/atom v_binID nchunk once ids once compress yes discard no
+compute xi      wall chunk/atom v_xi    nchunk once ids once compress yes discard no
+variable z atom z
+fix wall_1d wall ave/chunk 1 1 1 wall_1d v_z file ${name}.layerID.chunk.txt
+fix wall_1d wall ave/chunk 1 1 1 wall_1d v_z file 10x10p5w2.5d2.5.layerID.chunk.txt
+fix wall_2d wall ave/chunk 1 1 1 wall_2d v_x v_z  file ${name}.binID.chunk.txt
+fix wall_2d wall ave/chunk 1 1 1 wall_2d v_x v_z  file 10x10p5w2.5d2.5.binID.chunk.txt
+fix xi      wall ave/chunk 1 1 1 xi      v_x file ${name}.xi.chunk.txt
+fix xi      wall ave/chunk 1 1 1 xi      v_x file 10x10p5w2.5d2.5.xi.chunk.txt
+
+run 0
+WARNING: No fixes with time integration, atoms won't move (../verlet.cpp:60)
+Generated 0 of 1 mixed pair_coeff terms from geometric mixing rule
+Per MPI rank memory allocation (min/avg/max) = 36.19 | 36.19 | 36.19 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press     
+         0   0             -652863.13      0             -652863.13      1742.9412    
+Loop time of 6.5e-07 on 1 procs for 0 steps with 11800 atoms
+
+307.7% CPU use with 1 MPI tasks x no OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0          | 0          | 0          |   0.0 |  0.00
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0          | 0          | 0          |   0.0 |  0.00
+Output  | 0          | 0          | 0          |   0.0 |  0.00
+Modify  | 0          | 0          | 0          |   0.0 |  0.00
+Other   |            | 6.5e-07    |            |       |100.00
+
+Nlocal:          11800 ave       11800 max       11800 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:          27550 ave       27550 max       27550 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:              0 ave           0 max           0 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 0
+Ave neighs/atom = 0
+Neighbor list builds = 0
+Dangerous builds = 0
+
+write_dump wall custom ${name}.layerID.dump.txt id v_layerID modify sort 2
+write_dump wall custom 10x10p5w2.5d2.5.layerID.dump.txt id v_layerID modify sort 2
+write_dump wall custom ${name}.binID.dump.txt id v_binID modify sort 2
+write_dump wall custom 10x10p5w2.5d2.5.binID.dump.txt id v_binID modify sort 2
+write_dump wall custom ${name}.xi.dump.txt id v_xi modify sort 2
+write_dump wall custom 10x10p5w2.5d2.5.xi.dump.txt id v_xi modify sort 2
+Total wall time: 0:00:00

@@ -1,0 +1,13 @@
+#!/usr/bin/env gnuplot
+
+dat = "vcorr.dat"
+set term pngcairo
+set out dat.".png"
+
+set xrange [:5]
+set xlabel "Time [ps]"
+set ylabel "Velocity autocorrelation [Å^2/ps^2]"
+
+unset key
+
+plot dat u ($0*1e-3):(column("c_l[3]")*1e6) w l lc rgb "black"

@@ -1,0 +1,214 @@
+# last modified: 2022-07-06
+
+# randomize seeds
+python get_random_integer return v_random_integer format i here """
+def get_random_integer():
+  import random
+  # limits from random_mars.cpp
+  return random.randint(1, 900000000)
+"""
+variable random_integer python get_random_integer
+
+variable dt    index 1
+variable tstep index 100
+variable nstep index 10000000
+#variable dstep index 1000
+variable dstep index $(v_nstep/100)
+variable btemp index 100 # K
+variable ttemp index 120 # K
+variable tdamp index 100
+variable press index 0.1e6 # Pa
+
+variable nlayer_bot index 22
+variable nlayer_top index 22
+
+units real
+atom_style atomic
+atom_modify map yes
+
+variable kcal index 4184
+variable N_A  index 6.022140857e+23
+variable k    index 1.38064852e-23
+variable eV   index 1.6021766208e-19
+
+variable eta  index 0.5
+
+# Argon parameters #############################################################
+
+# Journal of Computational Physics Volume 17, Issue 4, April 1975, Pages 401-414
+# https://doi.org/10.1016/0021-9991(75)90042-X
+variable eps_ar index $(119.8*v_k*v_N_A/v_kcal)
+variable sig_ar index 3.405
+
+variable r0_ar equal 2^(1/6)*v_sig_ar
+variable scale_ar equal v_r0_ar*sqrt(2.0)
+
+# set 4000 as base for 10x10 system
+#variable natom_ar index $(ceil(4000/10/10*v_nx_wall*v_ny_wall))
+
+################################################################################
+
+# Metal parameters (Au)
+# phys. stat. sol. (a) 37, 695 (1976)
+# doi.org/10.1002/pssa.2210370242
+variable alpha_au index 1.66136
+variable r0_au    index 2.99032
+variable D_au     index $(0.49005*v_eV/v_kcal*v_N_A)
+
+# Au-Ar parameters
+# J. Phys. Chem. A, 2015, 119 (26), pp 6897–6908
+# DOI: 10.1021/acs.jpca.5b03769
+variable alpha_ar_au index 1.3787
+variable r0_ar_au    index 4.1024
+variable D_ar_au     index $(v_eta*0.013583*v_eV/v_kcal*v_N_A)
+
+################################################################################
+
+# read_data data.init nocoeff
+read_restart restart.init
+# change_box all boundary p p fs
+
+# force field parameters #######################################################
+pair_style hybrid morse 12.0 lj/cut 12.0
+
+mass 1 196.966569 # Au
+mass 2 39.95  # Ar
+
+pair_coeff 1 1 morse  ${D_au}    ${alpha_au}     ${r0_au}
+pair_coeff 1 2 morse  ${D_ar_au} ${alpha_ar_au}  ${r0_ar_au}
+pair_coeff 2 2 lj/cut ${eps_ar}  ${sig_ar}
+################################################################################
+
+group wall    type 1
+group liq     type 2
+
+region middle plane 0 0 $(xcm(wall,z)) 0 0 -1 units box
+group bottom region middle
+group top    subtract all bottom
+
+group bwall subtract bottom liq
+group twall subtract top    liq
+
+group bottom delete
+group top    delete
+
+variable layerID atomfile "table.atomfile.layerID"
+variable binID   atomfile "table.atomfile.binID"
+variable xi      atomfile "table.atomfile.xi"
+
+compute wchunks1d wall chunk/atom v_layerID nchunk once ids once discard yes
+compute wchunks2d wall chunk/atom v_binID   nchunk once ids once discard yes
+
+variable is_bmost atom v_layerID==1
+variable is_tmost atom v_layerID==$(v_nlayer_bot+v_nlayer_top)
+group bmost variable is_bmost
+group tmost variable is_tmost
+if "$(count(bmost)) != $(count(tmost))" then "print 'bad (b/t)most group'" quit
+
+variable is_blang atom v_layerID==2
+variable is_tlang atom v_layerID==$(v_nlayer_bot+v_nlayer_top-1)
+group blang variable is_blang
+group tlang variable is_tlang
+if "$(count(blang)) != $(count(tlang))" then "print 'bad (b/t)lang group'" quit
+
+compute lchunks1d liq chunk/atom bin/1d z lower 0.1 nchunk every ids every compress no discard no units box
+
+#variable ux atom xu
+compute ux wall property/atom xu
+variable  z atom  z
+
+
+compute pe all pe/atom
+compute pe_wall_liq wall pe/tally    liq
+compute f_wall_liq  wall force/tally liq
+compute hfbwall bwall heat/flux/virial/tally liq
+compute hftwall liq   heat/flux/virial/tally twall
+
+fix ave_wall_1d wall ave/chunk ${tstep} $(v_nstep/v_tstep/10) $(v_nstep/10) wchunks1d v_z temp c_pe c_pe_wall_liq[1] c_f_wall_liq[*] file wall_1D.dat format " %.17e" norm all ave one title3 "# Chunk Ncount Coord1 temp PotEng PotEng_sl Fx_sl Fy_sl Fz_sl"
+fix ave_wall_2d wall ave/chunk ${tstep} $(v_nstep/v_tstep/10) $(v_nstep/10) wchunks2d c_ux v_z temp c_pe c_pe_wall_liq[1] c_f_wall_liq[*] file wall_2D.dat format " %.17e" norm all ave one title3 "# Chunk Ncount Coord1 Coord2 temp PotEng PotEng_sl Fx_sl Fy_sl Fz_sl"
+fix ave_liq     liq  ave/chunk ${tstep} $(v_nstep/v_tstep/10) $(v_nstep/10) lchunks1d temp density/mass file liq_1D.dat  format " %.17e" norm all ave one
+
+variable A index $(lx*ly)
+
+# kcal/mol -> J                  kcal->J       1/mol->1
+variable ene_real2si         index $(v_kcal/v_N_A)
+
+# kcal/mol -> J/m^2              kcal/mol->J   1->1/A^2 1/A^2->1/m^2
+variable ene2edens_real2si   index $(v_ene_real2si/v_A*1e20)
+
+# kcal/mol/A -> N                kcal/mol->J   1/A->1/m
+variable force_real2si       index $(v_ene_real2si*1e10)
+
+# kcal/mol/A -> Pa               kcal/mol/A->N 1->1/A 1/A->m
+variable force2press_real2si index $(v_force_real2si/v_A*1e20)
+
+# kcal/mol/A*A/fs = kcal/mol/fs-> W kcal/mol->J 1/fs->1/s
+variable power_real2si       index $(v_ene_real2si*1e15)
+
+# kcal/mol/fs -> W/m^2
+variable power2flux_real2si  index $(v_power_real2si/v_A*1e20)
+
+# kcal/mol/A*A/fs*A = kcal*A/mol/fs-> Wm kcal/mol->J 1/fs->1/s A->m
+#variable powerdistance_real2si       index $(v_ene_real2si*1e15*1e-10)
+
+# kcal*A/mol/fs -> W/m^2
+#variable powerdistance2flux_real2si  index $(v_powerdistance_real2si/v_vol*1e30)
+
+# freeze topmost and bottommost wall layers,
+# but allow top layer movement in z direction according to external force
+variable aveforce index $(-v_press/v_force2press_real2si/count(tmost))
+fix wall_force_top  tmost aveforce    NULL NULL ${aveforce}
+fix wall_fix_top    tmost setforce    0    0    NULL
+# Au_bottommost is not integrated, so no need to setforce
+# fix wall_fix_bottom Au_bottommost setforce 0    0    0
+group integ subtract all bmost
+
+balance 1 shift z 1000 1
+fix blnc  all balance ${dstep} 1.05 shift z 100 1.05
+fix integ integ            nve
+#fix artemp liq temp/rescale 1 0 $(0.5*(v_btemp+v_ttemp)) 0.1 1.0
+fix blang  blang langevin ${btemp} ${btemp} ${tdamp} ${random_integer} tally yes
+fix tlang  tlang langevin ${ttemp} ${ttemp} ${tdamp} ${random_integer} tally yes
+
+variable bedens equal f_blang*v_ene2edens_real2si
+variable tedens equal f_tlang*v_ene2edens_real2si
+
+compute bforce bwall reduce sum c_f_wall_liq[3]
+compute tforce twall reduce sum c_f_wall_liq[3]
+
+variable bpress equal -c_bforce*v_force2press_real2si
+variable tpress equal  c_tforce*v_force2press_real2si
+
+variable ztop equal xcm(tmost,z)
+
+# heat flux computations
+# unit conversion
+variable hfb   equal c_hfbwall*v_power2flux_real2si
+variable hft   equal c_hftwall*v_power2flux_real2si
+
+group bfree subtract bwall bmost blang
+group tfree subtract twall tmost tlang
+
+compute ltemp liq temp
+compute bltemp blang temp
+compute bftemp bfree temp
+compute tltemp tlang temp
+compute tftemp tfree temp
+
+dump traj all dcd ${dstep} traj.dcd
+dump_modify traj unwrap yes
+thermo ${tstep}
+thermo_style custom step time pe ke etotal temp &
+  c_ltemp c_bltemp c_bftemp c_tltemp c_tftemp &
+  v_bpress v_tpress &
+  v_bedens v_tedens &
+  v_hfb v_hft &
+  v_ztop
+thermo_modify norm no format float %.17e
+
+timestep ${dt}
+write_data data.initial
+restart ${dstep} restart.a restart.b
+run ${nstep}
+write_data data.last
+write_restart restart.last
